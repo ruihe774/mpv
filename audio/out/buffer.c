@@ -425,10 +425,21 @@ void ao_set_paused(struct ao *ao, bool paused, bool eof)
 
     mp_mutex_unlock(&p->lock);
 
-    if (do_reset)
-        ao->driver->reset(ao);
-    if (do_start)
-        ao->driver->start(ao);
+    if (ao->driver->set_pause) {
+        if (do_reset) {
+            ao->driver->set_pause(ao, true);
+            p->end_time_ns -= mp_time_ns();
+        }
+        if (do_start) {
+            p->end_time_ns += mp_time_ns();
+            ao->driver->set_pause(ao, false);
+        }
+    } else {
+        if (do_reset)
+            ao->driver->reset(ao);
+        if (do_start)
+            ao->driver->start(ao);
+    }
 
     if (wakeup)
         ao_wakeup_playthread(ao);
