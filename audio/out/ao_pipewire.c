@@ -206,18 +206,16 @@ static void on_process(void *userdata)
 #endif
     end_time -= pw_stream_get_nsec(p->stream) - time.now;
 
-    int samples = ao_read_data_nonblocking(ao, data, nframes, end_time);
-    b->size = samples;
+    ao_read_data(ao, data, nframes, end_time);
+    b->size = nframes;
 
     for (int i = 0; i < buf->n_datas; i++) {
-        buf->datas[i].chunk->size = samples * ao->sstride;
+        buf->datas[i].chunk->size = nframes * ao->sstride;
         buf->datas[i].chunk->offset = 0;
         buf->datas[i].chunk->stride = ao->sstride;
     }
 
     pw_stream_queue_buffer(p->stream, b);
-
-    MP_TRACE(ao, "queued %d of %d samples\n", samples, nframes);
 }
 
 static void on_param_changed(void *userdata, uint32_t id, const struct spa_pod *param)
@@ -599,8 +597,6 @@ static int init(struct ao *ao)
 
     if (p->options.buffer_msec) {
         ao->device_buffer = p->options.buffer_msec * ao->samplerate / 1000;
-
-        pw_properties_setf(props, PW_KEY_NODE_LATENCY, "%d/%d", ao->device_buffer, ao->samplerate);
     }
 
     pw_properties_setf(props, PW_KEY_NODE_RATE, "1/%d", ao->samplerate);
@@ -661,8 +657,7 @@ static int init(struct ao *ao)
 
     enum pw_stream_flags flags = PW_STREAM_FLAG_AUTOCONNECT |
                                  PW_STREAM_FLAG_INACTIVE |
-                                 PW_STREAM_FLAG_MAP_BUFFERS |
-                                 PW_STREAM_FLAG_RT_PROCESS;
+                                 PW_STREAM_FLAG_MAP_BUFFERS;
 
     if (ao->init_flags & AO_INIT_EXCLUSIVE)
         flags |= PW_STREAM_FLAG_EXCLUSIVE;
