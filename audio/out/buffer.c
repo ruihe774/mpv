@@ -269,6 +269,47 @@ int ao_read_data_converted(struct ao *ao, struct ao_convert_fmt *fmt,
     return res;
 }
 
+// Waits for more audio data.
+// Returns whether playback is not terminated.
+// If timeout is -1, it is auto detected.
+bool ao_wait_data(struct ao *ao, int64_t timeout)
+{
+    struct buffer_state *p = ao->buffer_state;
+
+    if (timeout < 0) {
+        mp_mutex_lock(&p->lock);
+        if (p->streaming && (!p->paused || ao->stream_silence)) {
+            // Wake up again if half of the audio buffer has been played.
+            // Since audio could play at a faster or slower pace, wake up twice
+            // as often as ideally needed.
+            if (ao->driver->write) {
+                timeout = MP_TIME_S_TO_NS(ao->device_buffer) / ao->samplerate / 4;
+            } else {
+                timeout = (p->end_time_ns - mp_time_ns()) / 4;
+            }
+            // It is meaningless to wakeup too freqently
+            timeout = MPMAX(timeout, 10000000);
+        } else {
+            timeout = INT64_MAX;
+        }
+        mp_mutex_unlock(&p->lock);
+    }
+
+    mp_mutex_lock(&p->pt_lock);
+    if (p->terminate) {
+        mp_mutex_unlock(&p->pt_lock);
+        return false;
+    }
+    if (!p->need_wakeup && timeout) {
+        MP_STATS(ao, "start audio wait");
+        mp_cond_timedwait(&p->pt_wakeup, &p->pt_lock, timeout);
+        MP_STATS(ao, "end audio wait");
+    }
+    p->need_wakeup = false;
+    mp_mutex_unlock(&p->pt_lock);
+    return true;
+}
+
 int ao_control(struct ao *ao, enum aocontrol cmd, void *arg)
 {
     struct buffer_state *p = ao->buffer_state;
@@ -504,14 +545,15 @@ void ao_uninit(struct ao *ao)
 {
     struct buffer_state *p = ao->buffer_state;
 
-    if (p && p->thread_valid) {
+    if (p) {
         mp_mutex_lock(&p->pt_lock);
         p->terminate = true;
         mp_cond_broadcast(&p->pt_wakeup);
         mp_mutex_unlock(&p->pt_lock);
-
-        mp_thread_join(p->thread);
-        p->thread_valid = false;
+        if (p->thread_valid) {
+            mp_thread_join(p->thread);
+            p->thread_valid = false;
+        }
     }
 
     if (ao->driver_initialized)
@@ -568,9 +610,8 @@ bool init_buffer_post(struct ao *ao)
     };
     mp_async_queue_set_config(p->queue, cfg);
 
+    mp_filter_graph_set_wakeup_cb(p->filter_root, wakeup_filters, ao);
     if (ao->driver->write) {
-        mp_filter_graph_set_wakeup_cb(p->filter_root, wakeup_filters, ao);
-
         p->thread_valid = true;
         if (mp_thread_create(&p->thread, playthread, ao)) {
             p->thread_valid = false;
@@ -707,30 +748,10 @@ static MP_THREAD_VOID playthread(void *arg)
         if (!ao->driver->initially_blocked || p->initial_unblocked)
             retry = ao_play_data(ao);
 
-        // Wait until the device wants us to write more data to it.
-        // Fallback to guessing.
-        int64_t timeout = INT64_MAX;
-        if (p->streaming && !retry && (!p->paused || ao->stream_silence)) {
-            // Wake up again if half of the audio buffer has been played.
-            // Since audio could play at a faster or slower pace, wake up twice
-            // as often as ideally needed.
-            timeout = MP_TIME_S_TO_NS(ao->device_buffer / (double)ao->samplerate * 0.25);
-        }
-
         mp_mutex_unlock(&p->lock);
 
-        mp_mutex_lock(&p->pt_lock);
-        if (p->terminate) {
-            mp_mutex_unlock(&p->pt_lock);
+        if (!ao_wait_data(ao, retry ? -1 : 0))
             break;
-        }
-        if (!p->need_wakeup && !retry) {
-            MP_STATS(ao, "start audio wait");
-            mp_cond_timedwait(&p->pt_wakeup, &p->pt_lock, timeout);
-            MP_STATS(ao, "end audio wait");
-        }
-        p->need_wakeup = false;
-        mp_mutex_unlock(&p->pt_lock);
     }
     MP_THREAD_RETURN();
 }

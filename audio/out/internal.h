@@ -204,6 +204,7 @@ struct ao_driver {
 int ao_read_data(struct ao *ao, void **data, int samples, int64_t out_time_ns);
 MP_WARN_UNUSED_RESULT
 int ao_read_data_nonblocking(struct ao *ao, void **data, int samples, int64_t out_time_ns);
+bool ao_wait_data(struct ao *ao, int64_t timeout);
 
 bool ao_chmap_sel_adjust(struct ao *ao, const struct mp_chmap_sel *s,
                          struct mp_chmap *map);

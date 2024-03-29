@@ -78,8 +78,9 @@ static void feed(struct ao *ao)
     int64_t time_delta = CMTimeGetNanoseconds(CMTimeMake(request_sample_count, samplerate));
     int real_sample_count = ao_read_data_nonblocking(ao, data, request_sample_count, end_time_av - cur_time_av + cur_time_mp + time_delta);
     if (real_sample_count == 0) {
-        // avoid spinning by blocking the thread.
-        mp_sleep_ns(1000000);
+        if (!ao_wait_data(ao, -1)) {
+            [p->renderer stopRequestingMediaData];
+        }
         goto finish;
     }
 
