@@ -35,6 +35,7 @@ struct vulkan_opts {
     int queue_count;
     bool async_transfer;
     bool async_compute;
+    bool no_compute;
 };
 
 static inline OPT_STRING_VALIDATE_FUNC(vk_validate_dev)
@@ -234,6 +235,7 @@ pl_vulkan mppl_create_vulkan(struct vulkan_opts *opts,
 #endif
         .features = &features,
         .device_name = is_uuid ? NULL : opts->device,
+        .no_compute = opts->no_compute,
     };
     if (is_uuid)
         av_uuid_copy(device_params.device_uuid, param_uuid);
@@ -254,6 +256,7 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
     p->vk = vk;
     p->params = params;
     p->opts = mp_get_config_group(p, ctx->global, &vulkan_conf);
+    p->opts->no_compute = ctx->opts.no_compute;
 
     vk->vulkan = mppl_create_vulkan(p->opts, vk->vkinst, vk->pllog, vk->surface);
     if (!vk->vulkan)

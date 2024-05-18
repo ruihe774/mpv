@@ -201,6 +201,7 @@ const struct m_sub_options ra_ctx_conf = {
             .help = ra_ctx_api_help},
         {"gpu-debug", OPT_BOOL(debug)},
         {"gpu-sw", OPT_BOOL(allow_sw)},
+        {"gpu-disable-compute-shaders", OPT_BOOL(no_compute)},
         {0}
     },
     .size = sizeof(struct ra_ctx_opts),

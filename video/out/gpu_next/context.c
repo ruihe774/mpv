@@ -75,6 +75,7 @@ static bool d3d11_pl_init(struct vo *vo, struct gpu_ctx *ctx,
     pl_d3d11 d3d11 = pl_d3d11_create(ctx->pllog,
         pl_d3d11_params(
             .device = device,
+            .no_compute = ctx_opts->no_compute,
         )
     );
     if (!d3d11) {
@@ -146,6 +147,7 @@ struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts)
         struct pl_opengl_params params = *pl_opengl_params(
             .debug = ctx_opts->debug,
             .allow_software = ctx_opts->allow_sw,
+            .no_compute = ctx_opts->no_compute,
             .get_proc_addr_ex = (void *) gl->get_fn,
             .proc_ctx = gl->fn_ctx,
         );
