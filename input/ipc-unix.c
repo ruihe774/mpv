@@ -435,7 +435,7 @@ void mp_uninit_ipc(struct mp_ipc_ctx *arg)
     if (!arg)
         return;
 
-    (void)write(arg->death_pipe[1], &(char){0}, 1);
+    mp_wakeup_wakeup_pipe(arg->death_pipe[1]);
     mp_thread_join(arg->thread);
 
     close(arg->death_pipe[0]);

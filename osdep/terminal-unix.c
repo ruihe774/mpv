@@ -441,6 +441,8 @@ static MP_THREAD_VOID terminal_thread(void *ptr)
 {
     mp_thread_set_name("terminal/input");
     bool stdin_ok = read_terminal; // if false, we still wait for SIGTERM
+    bool quit = false;
+    int8_t c = -1;
     while (1) {
         getch2_poll();
         struct pollfd fds[3] = {
@@ -462,10 +464,12 @@ static MP_THREAD_VOID terminal_thread(void *ptr)
         int r = polldev(fds, stdin_ok && is_fg ? 3 : 2, buf.len ? ESC_TIMEOUT : INPUT_TIMEOUT);
         if (fds[0].revents) {
             do_deactivate_getch2();
+            if (fds[0].revents & POLLIN) {
+                quit = read(death_pipe[0], &c, 1) == 1 && c == 1;
+            }
             break;
         }
         if (fds[1].revents & POLLIN) {
-            int8_t c = -1;
             (void)read(stop_cont_pipe[0], &c, 1);
             if (c == PIPE_STOP) {
                 do_deactivate_getch2();
@@ -494,8 +498,6 @@ static MP_THREAD_VOID terminal_thread(void *ptr)
         if (r == 0)
             process_input(input_ctx, true);
     }
-    char c;
-    bool quit = read(death_pipe[0], &c, 1) == 1 && c == 1;
     // Important if we received SIGTERM, rather than regular quit.
     if (quit) {
         struct mp_cmd *cmd = mp_input_parse_cmd(input_ctx, bstr0("quit 4"), "");
@@ -510,7 +512,7 @@ void terminal_setup_getch(struct input_ctx *ictx)
     if (!getch2_enabled || input_ctx)
         return;
 
-    if (mp_make_wakeup_pipe(death_pipe) < 0)
+    if (mp_make_cloexec_pipe(death_pipe) < 0)
         return;
 
     // Disable reading from the terminal even if stdout is not a tty, to make
@@ -599,7 +601,7 @@ void terminal_init(void)
     assert(!getch2_enabled);
     getch2_enabled = 1;
 
-    if (mp_make_wakeup_pipe(stop_cont_pipe) < 0) {
+    if (mp_make_cloexec_pipe(stop_cont_pipe) < 0) {
         getch2_enabled = 0;
         return;
     }

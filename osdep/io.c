@@ -36,6 +36,10 @@
 #include "osdep/io.h"
 #include "osdep/terminal.h"
 
+#if HAVE_EVENTFD
+#include <sys/eventfd.h>
+#endif
+
 #if HAVE_UWP
 // Missing from MinGW headers.
 #include <windows.h>
@@ -65,33 +69,61 @@ bool mp_set_cloexec(int fd)
 #ifndef _WIN32
 int mp_make_cloexec_pipe(int pipes[2])
 {
-    if (pipe(pipes) != 0) {
+#if HAVE_PIPE2
+    int r = pipe2(pipes, O_CLOEXEC);
+#else
+    int r = pipe(pipes);
+#endif
+
+    if (r != 0) {
         pipes[0] = pipes[1] = -1;
         return -1;
     }
 
+#if !HAVE_PIPE2
     for (int i = 0; i < 2; i++)
         mp_set_cloexec(pipes[i]);
+#endif
+
     return 0;
 }
 
 // create a pipe, and set it to non-blocking (and also set FD_CLOEXEC)
 int mp_make_wakeup_pipe(int pipes[2])
 {
-    if (mp_make_cloexec_pipe(pipes) < 0)
+#if HAVE_EVENTFD
+    int r = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    pipes[0] = r;
+    if (r != -1)
+        pipes[1] = dup(r);
+#elif HAVE_PIPE2
+    int r = pipe2(pipes, O_CLOEXEC | O_NONBLOCK);
+#else
+    int r = mp_make_cloexec_pipe(pipes);
+#endif
+
+    if (r == -1)
         return -1;
 
+#if !HAVE_EVENTFD && !HAVE_PIPE2
     for (int i = 0; i < 2; i++) {
         int val = fcntl(pipes[i], F_GETFL) | O_NONBLOCK;
         fcntl(pipes[i], F_SETFL, val);
     }
+#endif
+
     return 0;
 }
 
-void mp_flush_wakeup_pipe(int pipe_end)
+void mp_flush_wakeup_pipe(int read_end)
 {
-    char buf[100];
-    (void)read(pipe_end, buf, sizeof(buf));
+    for (char buf[256]; read(read_end, buf, sizeof(buf)) > 0 && !HAVE_EVENTFD;);
+}
+
+void mp_wakeup_wakeup_pipe(int write_end)
+{
+    const uint64_t inc = 1;
+    (void)write(write_end, &inc, sizeof(inc));
 }
 #endif
 
@@ -961,17 +993,18 @@ error:
     return -1;
 }
 
-void mp_flush_wakeup_pipe(int pipe_end)
+void mp_flush_wakeup_pipe(int read_end)
 {
-    char buf[100];
-    OVERLAPPED operation = {};
-    HANDLE handle = (HANDLE)_get_osfhandle(pipe_end);
+    char buf[256];
+    OVERLAPPED operation;
+    HANDLE handle = (HANDLE)_get_osfhandle(read_end);
     if (handle == INVALID_HANDLE_VALUE)
         return;
-    if (!ReadFile(handle, buf, sizeof(buf), NULL, &operation)) {
-        if (GetLastError() != ERROR_IO_PENDING || !CancelIoEx(handle, &operation))
-            set_errno_from_lasterror();
-    }
+    do {
+        memset(&operation, 0, sizeof(OVERLAPPED));
+    } while (ReadFile(handle, buf, sizeof(buf), NULL, &operation));
+    if (GetLastError() != ERROR_IO_PENDING || !CancelIoEx(handle, &operation))
+        set_errno_from_lasterror();
 }
 
 #endif // __MINGW32__

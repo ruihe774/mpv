@@ -409,7 +409,7 @@ endif
 
 if posix
     path_source = files('osdep/path-unix.c')
-    if cc.has_function('fork', prefix : '#include <unistd.h>')
+    if cc.has_header_symbol('unistd.h', 'fork')
         sources += files('osdep/subprocess-posix.c')
     else
         sources += files('osdep/subprocess-dummy.c')
@@ -434,10 +434,10 @@ if posix and not darwin
     timer_source = files('osdep/timer-linux.c')
 endif
 
-features += {'ppoll': cc.has_function('ppoll', args: '-D_GNU_SOURCE',
-                                      prefix: '#include <poll.h>')}
-features += {'memrchr': cc.has_function('memrchr', args: '-D_GNU_SOURCE',
-                                        prefix: '#include <string.h>')}
+features += {'ppoll': cc.has_header_symbol('poll.h', 'ppoll', args: '-D_GNU_SOURCE')}
+features += {'memrchr': cc.has_header_symbol('string.h', 'memrchr', args: '-D_GNU_SOURCE')}
+features += {'pipe2': cc.has_header_symbol('unistd.h', 'pipe2', args: '-D_GNU_SOURCE')}
+features += {'eventfd': cc.has_header_symbol('sys/eventfd.h', 'eventfd')}
 
 cd_devices = {
     'windows': 'D:',
@@ -535,7 +535,7 @@ else
     features += {'win32-smtc': false}
 endif
 
-features += {'glob-posix': cc.has_function('glob', prefix: '#include <glob.h>')}
+features += {'glob-posix': cc.has_header_symbol('glob.h', 'glob')}
 
 features += {'glob-win32': win32 and not features['glob-posix']}
 if features['glob-win32']
@@ -555,19 +555,18 @@ features += {'mac-thread-name': darwin}
 
 features += {'glibc-thread-name': false}
 if not features['mac-thread-name']
-    features += {'glibc-thread-name': posix and cc.has_function('pthread_setname_np', args: '-D_GNU_SOURCE',
-                                                                dependencies: pthreads, prefix: '#include <pthread.h>')}
+    features += {'glibc-thread-name': posix and cc.has_header_symbol('pthread.h', 'pthread_setname_np',
+                                                                     args: '-D_GNU_SOURCE', dependencies: pthreads)}
 endif
 
 features += {'bsd-thread-name': false}
 if not features['mac-thread-name'] and not features['glibc-thread-name']
-    features += {'bsd-thread-name': posix and cc.has_function('pthread_set_name_np', dependencies: pthreads,
-                                                              prefix: '#include <pthread.h>\n#include <pthread_np.h>')}
+    features += {'bsd-thread-name': posix and cc.has_header_symbol('pthread_np.h', 'pthread_set_name_np', dependencies: pthreads)}
 endif
 
-features += {'bsd-fstatfs': cc.has_function('fstatfs', prefix: '#include <sys/mount.h>\n#include <sys/param.h>')}
+features += {'bsd-fstatfs': cc.has_header_symbol('sys/mount.h', 'fstatfs')}
 
-features += {'linux-fstatfs': cc.has_function('fstatfs', prefix: '#include <sys/vfs.h>')}
+features += {'linux-fstatfs': cc.has_header_symbol('sys/vfs.h', 'fstatfs')}
 
 features += {'vector': cc.has_function_attribute('vector_size', required: get_option('vector'))}
 
@@ -984,7 +983,7 @@ endif
 
 features += {'posix-shm': false}
 if features['posix']
-    features += {'posix-shm': cc.has_function('shm_open', prefix: '#include <sys/mman.h>')}
+    features += {'posix-shm': cc.has_header_symbol('sys/mman.h', 'shm_open')}
 endif
 
 spirv_cross = dependency('spirv-cross-c-shared', required:
@@ -1030,8 +1029,7 @@ endif
 
 features += {'memfd-create': false}
 if features['wayland']
-    features += {'memfd-create': cc.has_function('memfd_create',
-                                                 prefix: '#define _GNU_SOURCE\n#include <sys/mman.h>')}
+    features += {'memfd-create': cc.has_header_symbol('sys/mman.h', 'memfd_create', args: '-D_GNU_SOURCE')}
 endif
 if features['wayland'] and features['memfd-create']
     sources += files('video/out/vo_wlshm.c')
@@ -1167,9 +1165,8 @@ endif
 egl_dep = cc.find_library('EGL', required:
     get_option('egl-angle-lib').require(features['egl-angle']))
 egl_angle_lib = get_option('egl-angle-lib').require(
-    egl_dep.found() and cc.has_function('eglCreateWindowSurface',
-                                               dependencies: egl_dep,
-                                               prefix: '#include <EGL/egl.h>'),
+    egl_dep.found() and cc.has_header_symbol('EGL/egl.h', 'eglCreateWindowSurface',
+                                               dependencies: egl_dep),
     error_message: 'egl-angle-lib could not be found!',
 )
 features += {'egl-angle-lib': egl_angle_lib.allowed()}
@@ -1304,8 +1301,8 @@ if features['vulkan'] and features['x11']
 endif
 
 features += {'vk-khr-display': vulkan.type_name() == 'internal' or
-                               cc.has_function('vkCreateDisplayPlaneSurfaceKHR', prefix: '#include <vulkan/vulkan_core.h>',
-                                               dependencies: [vulkan])}
+                               cc.has_header_symbol('vulkan/vulkan_core.h', 'vkCreateDisplayPlaneSurfaceKHR',
+                                               dependencies: vulkan)}
 if features['vk-khr-display']
     sources += files('video/out/vulkan/context_display.c')
 endif

@@ -146,7 +146,7 @@ static void trigger_locked(struct mp_cancel *c)
         mp_cancel_trigger(sub);
 
     if (c->wakeup_pipe[1] >= 0)
-        (void)write(c->wakeup_pipe[1], &(char){0}, 1);
+        mp_wakeup_wakeup_pipe(c->wakeup_pipe[1]);
 
 #ifdef _WIN32
     if (c->win32_event)
@@ -168,12 +168,7 @@ void mp_cancel_reset(struct mp_cancel *c)
     atomic_store(&c->triggered, false);
 
     if (c->wakeup_pipe[0] >= 0) {
-        // Flush it fully.
-        while (1) {
-            int r = read(c->wakeup_pipe[0], &(char[256]){0}, 256);
-            if (r <= 0 && !(r < 0 && errno == EINTR))
-                break;
-        }
+        mp_flush_wakeup_pipe(c->wakeup_pipe[0]);
     }
 
 #ifdef _WIN32
