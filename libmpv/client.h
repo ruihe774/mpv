@@ -1841,26 +1841,19 @@ MPV_EXPORT int mpv_hook_continue(mpv_handle *ctx, uint64_t id);
 #if MPV_ENABLE_DEPRECATED
 
 /**
- * Return a UNIX file descriptor referring to the read end of a pipe. This
- * pipe can be used to wake up a poll() based processing loop. The purpose of
+ * Return a readable UNIX file descriptor. This file descriptor can be used to
+ * wake up a poll() based processing loop. The purpose of
  * this function is very similar to mpv_set_wakeup_callback(), and provides
  * a primitive mechanism to handle coordinating a foreign event loop and the
- * libmpv event loop. The pipe is non-blocking. It's closed when the mpv_handle
- * is destroyed. This function always returns the same value (on success).
+ * libmpv event loop. The file descriptor is non-blocking.
+ * It's closed when the mpv_handle is destroyed.
+ * This function always returns the same value (on success).
  *
- * This is in fact implemented using the same underlying code as for
- * mpv_set_wakeup_callback() (though they don't conflict), and it is as if each
- * callback invocation writes a single 0 byte to the pipe. When the pipe
- * becomes readable, the code calling poll() (or select()) on the pipe should
+ * When the file descriptor becomes readable,
+ * the code calling poll() (or select()) on the file descriptor should
  * read all contents of the pipe and then call mpv_wait_event(c, 0) until
- * no new events are returned. The pipe contents do not matter and can just
- * be discarded. There is not necessarily one byte per readable event in the
- * pipe. For example, the pipes are non-blocking, and mpv won't block if the
- * pipe is full. Pipes are normally limited to 4096 bytes, so if there are
- * more than 4096 events, the number of readable bytes can not equal the number
- * of events queued. Also, it's possible that mpv does not write to the pipe
- * once it's guaranteed that the client was already signaled. See the example
- * below how to do it correctly.
+ * no new events are returned. The read contents do not matter and can just
+ * be discarded. How many bytes can be read per readable event is not defined.
  *
  * Example:
  *
@@ -1895,8 +1888,8 @@ MPV_EXPORT int mpv_hook_continue(mpv_handle *ctx, uint64_t id);
  *             functionality, use mpv_set_wakeup_callback(), create a pipe
  *             manually, and call write() on your pipe in the callback.
  *
- * @return A UNIX FD of the read end of the wakeup pipe, or -1 on error.
- *         On MS Windows/MinGW, this will always return -1.
+ * @return A UNIX file descriptor, or -1 on error.
+ *         On MS Windows/MinGW, this will return a C runtime file descriptor.
  */
 MPV_EXPORT int mpv_get_wakeup_pipe(mpv_handle *ctx);
 
