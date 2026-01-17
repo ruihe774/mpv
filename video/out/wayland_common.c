@@ -33,6 +33,7 @@
 #include "osdep/timer.h"
 #include "present_sync.h"
 #include "video/out/gpu/video.h"
+#include "wayland-util.h"
 #include "wayland_common.h"
 #include "win_state.h"
 
@@ -68,6 +69,10 @@
 
 #if WAYLAND_VERSION_MAJOR > 1 || WAYLAND_VERSION_MINOR >= 22
 #define HAVE_WAYLAND_1_22
+#endif
+
+#if HAVE_DRM
+#include "drm-lease-v1.h"
 #endif
 
 #ifndef CLOCK_MONOTONIC_RAW
@@ -345,6 +350,19 @@ static void update_output_scaling(struct vo_wayland_state *wl);
 static void update_output_geometry(struct vo_wayland_state *wl, struct mp_rect old_geometry,
                                    struct mp_rect old_output_geometry);
 static void destroy_offer(struct vo_wayland_data_offer *o);
+
+#if HAVE_DRM
+struct vo_drm_lease_connector {
+    struct wp_drm_lease_connector_v1 *connector;
+    struct wl_list link;
+    const char *name;
+    const char *description;
+    uint32_t connector_id;
+};
+
+static const struct wp_drm_lease_device_v1_listener drm_lease_device_listener;
+static void remove_connector(struct vo_drm_lease_connector* connector);
+#endif
 
 /* Wayland listener boilerplate */
 static void pointer_handle_enter(void *data, struct wl_pointer *pointer,
@@ -2787,6 +2805,15 @@ static void registry_handle_add(void *data, struct wl_registry *reg, uint32_t id
         wl->wp_tablet_manager = wl_registry_bind(reg, id, &zwp_tablet_manager_v2_interface, ver);
     }
 
+#if HAVE_DRM
+    if (!strcmp(interface, wp_drm_lease_device_v1_interface.name) && found++) {
+        ver = 1;
+        wl_list_init(&wl->drm_lease_connectors);
+        wl->drm_lease_device = wl_registry_bind(reg, id, &wp_drm_lease_device_v1_interface, ver);
+        wp_drm_lease_device_v1_add_listener(wl->drm_lease_device, &drm_lease_device_listener, wl);
+    }
+#endif
+
     if (found > 1)
         MP_VERBOSE(wl, "Registered interface %s at version %d\n", interface, ver);
 }
@@ -4196,7 +4223,7 @@ bool vo_wayland_valid_format(struct vo_wayland_state *wl, uint32_t drm_format, u
     return false;
 }
 
-bool vo_wayland_init(struct vo *vo)
+static bool vo_wayland_preinit(struct vo *vo)
 {
     if (!getenv("WAYLAND_DISPLAY") && !getenv("WAYLAND_SOCKET"))
         goto err;
@@ -4236,6 +4263,20 @@ bool vo_wayland_init(struct vo *vo)
 
     /* Do a roundtrip to run the registry */
     wl_display_roundtrip(wl->display);
+
+    return true;
+
+err:
+    vo_wayland_uninit(vo);
+    return false;
+}
+
+bool vo_wayland_init(struct vo *vo)
+{
+    if (!vo_wayland_preinit(vo))
+        goto err;
+
+    struct vo_wayland_state *wl = vo->wl;
 
     if (!wl->surface) {
         MP_FATAL(wl, "Compositor doesn't support %s (ver. 4)\n",
@@ -4633,6 +4674,18 @@ void vo_wayland_uninit(struct vo *vo)
     if (wl->wp_tablet_manager)
         zwp_tablet_manager_v2_destroy(wl->wp_tablet_manager);
 
+#if HAVE_DRM
+    struct vo_drm_lease_connector *connector, *connector_tmp;
+    wl_list_for_each_safe(connector, connector_tmp, &wl->drm_lease_connectors, link)
+        remove_connector(connector);
+
+    if (wl->drm_lease)
+        wp_drm_lease_v1_destroy(wl->drm_lease);
+
+    if (wl->drm_lease_device)
+        wp_drm_lease_device_v1_destroy(wl->drm_lease_device);
+#endif
+
     if (wl->display)
         wl_display_disconnect(wl->display);
 
@@ -4714,3 +4767,138 @@ void vo_wayland_wakeup(struct vo *vo)
     struct vo_wayland_state *wl = vo->wl;
     (void)write(wl->wakeup_pipe[1], &(char){0}, 1);
 }
+
+#if HAVE_DRM
+static void remove_connector(struct vo_drm_lease_connector* connector)
+{
+    wp_drm_lease_connector_v1_destroy(connector->connector);
+    wl_list_remove(&connector->link);
+}
+
+static void drm_lease_connector_handle_name(void *data, struct wp_drm_lease_connector_v1 *_, const char *name)
+{
+    struct vo_drm_lease_connector *connector = data;
+    connector->name = name;
+}
+
+static void drm_lease_connector_handle_description(void *data, struct wp_drm_lease_connector_v1 *_, const char *description)
+{
+    struct vo_drm_lease_connector *connector = data;
+    connector->description = description;
+}
+
+static void drm_lease_connector_handle_connector_id(void *data, struct wp_drm_lease_connector_v1 *_, uint32_t connector_id)
+{
+    struct vo_drm_lease_connector *connector = data;
+    connector->connector_id = connector_id;
+}
+
+static void drm_lease_connector_handle_done(void *data, struct wp_drm_lease_connector_v1 *_) {}
+
+static void drm_lease_connector_handle_withdrawn(void *data, struct wp_drm_lease_connector_v1 *_)
+{
+    struct vo_drm_lease_connector *connector = data;
+    remove_connector(connector);
+}
+
+static const struct wp_drm_lease_connector_v1_listener drm_lease_connector_listener = {
+    drm_lease_connector_handle_name,
+    drm_lease_connector_handle_description,
+    drm_lease_connector_handle_connector_id,
+    drm_lease_connector_handle_done,
+    drm_lease_connector_handle_withdrawn,
+};
+
+static void drm_lease_device_drm_fd(void *data, struct wp_drm_lease_device_v1 *_, int32_t fd) {
+    struct vo_wayland_state *wl = data;
+    MP_DBG(wl, "drm_lease_device_drm_fd\n");
+}
+
+static void drm_lease_device_handle_connector(void *data, struct wp_drm_lease_device_v1 *_, struct wp_drm_lease_connector_v1 *connector)
+{
+    struct vo_wayland_state *wl = data;
+    struct vo_drm_lease_connector *new_connector = talloc_zero(wl, struct vo_drm_lease_connector);
+    MP_DBG(wl, "drm_lease_device_handle_connector %p\n", connector);
+    new_connector->connector = connector;
+    wl_list_insert(&wl->drm_lease_connectors, &new_connector->link);
+
+    wp_drm_lease_connector_v1_add_listener(connector, &drm_lease_connector_listener, new_connector);
+}
+
+static void drm_lease_device_handle_done(void *data, struct wp_drm_lease_device_v1 *_) {
+    struct vo_wayland_state *wl = data;
+    MP_DBG(wl, "drm_lease_device_handle_done\n");
+}
+
+static void drm_lease_device_handle_released(void *data, struct wp_drm_lease_device_v1 *_) {}
+
+static const struct wp_drm_lease_device_v1_listener drm_lease_device_listener = {
+    drm_lease_device_drm_fd,
+    drm_lease_device_handle_connector,
+    drm_lease_device_handle_done,
+    drm_lease_device_handle_released,
+};
+
+static void drm_lease_handle_lease_fd(void *data, struct wp_drm_lease_v1 *drm_lease, int32_t leased_fd)
+{
+    struct vo_wayland_state *wl = data;
+    wl->drm_leased_fd = leased_fd;
+}
+
+static void drm_lease_handle_finished(void *data, struct wp_drm_lease_v1 *_) {}
+
+static const struct wp_drm_lease_v1_listener drm_lease_listener = {
+    drm_lease_handle_lease_fd,
+    drm_lease_handle_finished,
+};
+
+bool vo_drm_lease_init(struct vo *vo, bool (*connector_selector)(struct vo*, const char*, const char*, uint32_t))
+{
+    if (!vo_wayland_preinit(vo))
+        goto err;
+
+    struct vo_wayland_state *wl = vo->wl;
+
+    if (!wl->drm_lease_device) {
+        MP_FATAL(wl, "Compositor doesn't support %s\n",
+                 wp_drm_lease_v1_interface.name);
+        goto err;
+    }
+
+    // Do another roundtrip to receive connectors
+    wl_display_roundtrip(wl->display);
+
+    struct vo_drm_lease_connector *connector, *selected_connector = NULL;
+    wl_list_for_each_reverse(connector, &wl->drm_lease_connectors, link) {
+        if (connector_selector(vo, connector->name, connector->description, connector->connector_id)) {
+            selected_connector = connector;
+            break;
+        }
+    }
+    if (!selected_connector)
+        goto err;
+
+    struct wp_drm_lease_request_v1 *drm_lease_request =
+        wp_drm_lease_device_v1_create_lease_request(wl->drm_lease_device);
+
+    wp_drm_lease_request_v1_request_connector(drm_lease_request, selected_connector->connector);
+
+    wl->drm_lease = wp_drm_lease_request_v1_submit(drm_lease_request);
+    // Do not destroy drm_lease_request; it's already destroyed by submission.
+
+    wp_drm_lease_v1_add_listener(wl->drm_lease, &drm_lease_listener, wl);
+
+    if (wl_display_roundtrip(wl->display) == -1)
+        goto err;
+
+    if (!vo->wl->drm_leased_fd) // sanity check
+        goto err;
+
+    return true;
+
+err:
+    vo_wayland_uninit(vo);
+    return false;
+}
+#endif
+

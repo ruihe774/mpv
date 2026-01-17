@@ -40,6 +40,10 @@ if features['wayland-protocols-1-44']
     protocols += [[wl_protocol_dir, 'staging/color-representation/color-representation-v1.xml']]
 endif
 
+if features['drm']
+    protocols += [[wl_protocol_dir, 'staging/drm-lease/drm-lease-v1.xml']]
+endif
+
 foreach p: protocols
     xml = join_paths(p)
     wl_protocols_source += custom_target(xml.underscorify() + '_c',

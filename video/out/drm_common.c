@@ -28,6 +28,7 @@
 #include <drm_fourcc.h>
 
 #include "config.h"
+#include "video/out/wayland_common.h"
 
 #if HAVE_CONSIO_H
 #include <sys/consio.h>
@@ -1054,10 +1055,18 @@ int vo_drm_control(struct vo *vo, int *events, int request, void *arg)
     return VO_NOTIMPL;
 }
 
+static bool connector_selector(struct vo *vo, const char *name, const char *desc, uint32_t id)
+{
+    struct vo_drm_state *drm = vo->drm;
+    MP_INFO(drm, "#%u %s: %s\n", id, name, desc);
+    return false;
+}
+
 bool vo_drm_init(struct vo *vo)
 {
     vo->drm = talloc_zero(NULL, struct vo_drm_state);
     struct vo_drm_state *drm = vo->drm;
+    drmModeRes *res = NULL;
 
     *drm = (struct vo_drm_state) {
         .vo = vo,
@@ -1067,6 +1076,13 @@ bool vo_drm_init(struct vo *vo)
         .card_no = -1,
     };
 
+    drm->opts = mp_get_config_group(drm, drm->vo->global, &drm_conf);
+
+#if HAVE_WAYLAND
+    if (!vo_drm_lease_init(vo, connector_selector))
+        goto err;
+#endif
+
     drm->vt_switcher_active = vt_switcher_init(&drm->vt_switcher, drm->log);
     if (drm->vt_switcher_active) {
         vt_switcher_acquire(&drm->vt_switcher, acquire_vt, drm);
@@ -1075,9 +1091,6 @@ bool vo_drm_init(struct vo *vo)
         MP_WARN(drm, "Failed to set up VT switcher. Terminal switching will be unavailable.\n");
     }
 
-    drm->opts = mp_get_config_group(drm, drm->vo->global, &drm_conf);
-
-    drmModeRes *res = NULL;
     get_primary_device_path(drm);
 
     if (!drm->card_path) {

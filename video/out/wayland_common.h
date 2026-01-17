@@ -20,6 +20,7 @@
 
 #include <wayland-client.h>
 
+#include "drm-lease-v1.h"
 #include "input/event.h"
 #include "video/mp_image.h"
 #include "vo.h"
@@ -189,6 +190,14 @@ struct vo_wayland_state {
     bool                    cursor_visible;
     int                     allocated_cursor_scale;
     struct vo_wayland_seat *last_button_seat;
+
+#if HAVE_DRM
+    /* DRM lease */
+    struct wp_drm_lease_device_v1 *drm_lease_device;
+    struct wp_drm_lease_v1 *drm_lease;
+    struct wl_list          drm_lease_connectors;
+    int                     drm_leased_fd;
+#endif
 };
 
 bool vo_wayland_check_visible(struct vo *vo);
@@ -208,5 +217,9 @@ void vo_wayland_uninit(struct vo *vo);
 void vo_wayland_wait_events(struct vo *vo, int64_t until_time_ns);
 void vo_wayland_wait_frame(struct vo_wayland_state *wl);
 void vo_wayland_wakeup(struct vo *vo);
+
+#if HAVE_DRM
+bool vo_drm_lease_init(struct vo *vo, bool (*connector_selector)(struct vo *vo, const char *name, const char *desc, uint32_t id));
+#endif
 
 #endif /* MPLAYER_WAYLAND_COMMON_H */
